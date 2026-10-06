@@ -1,0 +1,11 @@
+# The structured truth the KB articles AND the evaluation answers are generated from (PLAN.md §3.1).
+company: NovaBank (fictional)
+products:
+  transfers:
+    domestic_fee_pct: 0.0
+    international_fee_pct: 2.0
+    daily_limit_usd: 5000
+    settlement: "1-2 business days"
+  cards:
+    replacement_fee_usd: 10
+    contactless_limit_usd: 100

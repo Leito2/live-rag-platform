@@ -1,0 +1,47 @@
+# Profiles (PLAN.md §9): ingest | serve | full-lite
+x-all: &all
+  profiles: ["ingest", "serve", "full-lite"]
+x-ingest: &ingest
+  profiles: ["ingest", "full-lite"]
+
+services:
+  postgres:
+    <<: *all
+    image: pgvector/pgvector:pg17
+    environment: { POSTGRES_DB: rag, POSTGRES_USER: rag, POSTGRES_PASSWORD: rag }
+    volumes: ["./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro"]
+    ports: ["5432:5432"]
+    mem_limit: 300m
+
+  qdrant:
+    <<: *all
+    image: qdrant/qdrant:latest             # pin in M3
+    ports: ["6333:6333"]
+    mem_limit: 300m
+
+  redpanda:
+    <<: *ingest
+    image: redpandadata/redpanda:latest     # pin in M1
+    command: ["redpanda", "start", "--smp", "1", "--memory", "512M", "--overprovisioned",
+              "--node-id", "0", "--check=false",
+              "--kafka-addr", "INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092",
+              "--advertise-kafka-addr", "INTERNAL://redpanda:29092,EXTERNAL://localhost:9092"]
+    ports: ["9092:9092"]
+    mem_limit: 700m
+
+  redis:
+    profiles: ["serve", "full-lite"]
+    image: redis:8
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb"]
+    mem_limit: 150m
+
+  llm-gateway:
+    profiles: ["serve", "full-lite"]
+    build: ../llm-gateway                   # P0 — shared Python gateway
+    env_file: ../llm-gateway/.env.example
+    environment: { GW_REDIS_URL: "redis://redis:6379/1" }
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    mem_limit: 400m
+
+  # Services added per milestone: outbox-relay (M1), spark ingest job (M2), api + ui (M4), freshness-probe (M2),
+  # prometheus/grafana (M6). Spark uses an image with the Kafka connector JARs baked in (PLAN.md §13, R1).

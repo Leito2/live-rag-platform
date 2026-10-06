@@ -1,0 +1,32 @@
+[project]
+name = "live-rag-platform"
+version = "0.1.0"
+description = "Live RAG: Postgres CDC → Spark Structured Streaming → Qdrant/pgvector, agentic RAG with SSE, Haiku on Cloud Run."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["ragcore"]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+ragcore = { workspace = true }
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ragcore"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/ragcore/tests", "tests"]
