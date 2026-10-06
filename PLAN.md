@@ -2,6 +2,7 @@
 
 > **Plan de proyecto** (vive en este repo como `PLAN.md`). **Estado:** ✅ Plan completo (13/13 módulos), listo para implementar en la fase F7 del plan de Learning.
 > Stack: PostgreSQL (fuente + CDC) · Kafka · Spark Structured Streaming · HF embeddings · Qdrant + pgvector · LangGraph (RAG agéntico) · FastAPI + SSE · Haiku (solo en el test final) vía LLM Gateway (`llm-gateway`, Python) · MLflow + Langfuse · GCP (Cloud Run + Qdrant Cloud free) · Terraform · Docker Compose
+> **v2 (§14):** verificador NLI de alucinaciones (ONNX, CPU) · `judgekit` + panel de jueces (Gemma 4 31B) · Langfuse datasets/experiments · KFP v2 → **Vertex AI Pipelines** (prueba final) · caché semántica de P0 invalidada por los eventos del outbox · baselines de chunking y embeddings del proyecto multiagente
 > Gasto: **$0 hasta el test final** (mock/Ollama en desarrollo).
 
 ## Módulos del plan
@@ -20,6 +21,7 @@
 | 11 | Estructura del repo y del README | ✅ |
 | 12 | Hitos de implementación y criterios de aceptación | ✅ |
 | 13 | Riesgos y pendientes | ✅ |
+| 14 | **v2 — Absorción de los proyectos del CV** (auditoría de alucinaciones, Vertex AI Pipelines, caché semántica con invalidación por CDC) | ✅ v2 |
 
 ## Regla del README
 README progresivo: **contexto teórico, conceptual y macro primero**; en cada componente, el detalle técnico al final. Incluye cómo funciona, los pasos para ejecutarlo y las alternativas de ejecución o despliegue (local primero).
@@ -569,4 +571,42 @@ Debezium (Server o Connect) en lugar del outbox, con la comparación outbox vs C
 ### 13.4 Preguntas abiertas
 1. ~~¿El gateway soporta Anthropic con streaming, cancelación y tope de presupuesto?~~ → **resuelto por diseño** en `llm-gateway` (hitos M4, M5 y M7).
 2. ¿Tienes una cuenta de GCP con facturación activa (necesaria incluso para el free tier)? ¿Y una cuenta de Qdrant Cloud?
-3. ¿Nombre del repo `live-rag-platform`?
+3. ~~¿Nombre del repo `live-rag-platform`?~~ → **resuelto:** repo público `Leito2/live-rag-platform`.
+
+
+---
+
+## 14. v2 — Absorción de los proyectos del CV en P3
+
+> **Decisión (2026-10-06):** los tres proyectos del CV quedan aparte, y su contenido se reparte en P0–P4. En P3 (el único proyecto en GCP) entran la **auditoría de alucinaciones** y los **Vertex AI Pipelines** del *LLM Evaluation Suite*, la **caché semántica con invalidación** del gateway en Go (vía P0) y las prácticas de retrieval y observabilidad del *Hybrid RAG Multi-Agent Research System*.
+
+### 14.1 Mapa de absorción
+| Origen (CV) | Elemento | Cómo existe en P3 | Hito |
+|---|---|---|---|
+| Evaluation Suite | **Auditoría de alucinaciones** | Faithfulness **a nivel de afirmación**: la respuesta se divide en afirmaciones y cada una se verifica contra los chunks citados con dos verificadores independientes: (1) un **modelo NLI pequeño en CPU** (clasificador de alucinaciones tipo HHEM o un cross-encoder NLI, en ONNX) y (2) el juez LLM de `judgekit`. Métricas: `hallucination_rate`, `unsupported_claim_rate` y precisión de citas. El nodo `check_groundedness` del grafo usa el verificador NLI en línea (barato) y el juez solo en evaluación | M5 |
+| Evaluation Suite | **Vertex AI Pipelines** (reentrenar o re-promptear al degradarse) | Pipeline KFP v2 `rag-quality-loop`: evaluar con `judgekit` → si cae la faithfulness o la Recall@5 → **reindex blue/green** con otra configuración de chunking o **variante de prompt** → evaluar el candidato → compuerta → promover. Corre local con `kfp.local` en desarrollo y **se ejecuta una vez en Vertex AI Pipelines durante la prueba final (M8)**, junto con el del P2 compilado (mismo YAML) | M7, M8 |
+| Evaluation Suite | Gemma 4 31B *golden evaluator* | Panel de jueces en la prueba final: juez local (Gemma 3 4B), **Gemma 4 31B** (`judge_golden`, free tier) y Haiku (`smart_paid`, centavos), comparados contra las 60 etiquetas humanas | M5, M8 |
+| Evaluation Suite | asyncio, Pandas, HF Evaluate, token matching | Vía `judgekit`: exact match y F1 de tokens contra la respuesta de referencia, IDs de cita, reportes Pandas por tipo de pregunta (factual, multi-hop, sin respuesta, frescura) | M5 |
+| Evaluation Suite | Langfuse | Datasets (las ~200 preguntas), experiments por configuración de §6.5, scores por traza, prompt management del generador | M5 |
+| Go Edge Gateway | **Caché semántica + invalidación** | P3 es el mayor cliente de la caché semántica de P0 (FAQ con distribución Zipf). Cada respuesta se guarda con `X-Cache-Tags` = los `doc_id` citados. El **relay del outbox** también avisa al gateway (`POST /admin/cache/invalidate` o el consumidor de `kb-changes` de P0), así que **un cambio en la KB invalida las respuestas cacheadas que lo citaban**. El probe de frescura (§4.5) mide además el tiempo hasta que la caché deja de servir el valor viejo | M6 |
+| Go Edge Gateway | Circuit breaker, fallback local, headers de diagnóstico | Heredados vía P0; la UI de P3 muestra `X-Cache-Layer` y `X-Provider` en cada respuesta | M4 |
+| Multi-Agent Research | `RecursiveCharacterTextSplitter` (512/64) | **Baseline de chunking** frente al chunking por estructura de §4.3, y frente a **encabezados contextuales** (título + ruta de encabezados + resumen determinista del artículo antepuesto a cada chunk). Comparados en Recall@5 y faithfulness | M3 |
+| Multi-Agent Research | `bge-small-en-v1.5` (384d) | Segundo embedder en el experimento de embeddings: e5-small multilingüe (por defecto) vs bge-small (inglés) vs bge-m3 (`⏳ 16GB`), por idioma de la pregunta | M3 |
+| Multi-Agent Research | MLflow con saneamiento | Las corridas de evaluación **no** registran contenido de documentos: solo métricas, parámetros y hashes SHA-256 de los chunks (política heredada); `metrics.jsonl` como respaldo si MLflow no está disponible | M5 |
+| Multi-Agent Research | "Evidencia insuficiente" y *fail-closed* | Ya presentes (abstención y `retract`); se agregan como requisitos EARS en el README con su test | M5 |
+
+### 14.2 Cambios en la prueba final (M8)
+- Se suma **una corrida de Vertex AI Pipelines** (`rag-quality-loop`) contra el despliegue en Cloud Run. El costo de Vertex Pipelines es por corrida más el cómputo de sus componentes: se presupuesta en centavos dentro del tope total de **US$3** y se destruye todo con Terraform al final (agregar el bucket de artefactos del pipeline al `destroy`).
+- La caché semántica se mide en la nube: hit rate y ahorro reales con Haiku.
+
+### 14.3 Hitos ampliados
+| Hito | Cambio |
+|---|---|
+| M3 | + baseline `RecursiveCharacterTextSplitter` 512/64, encabezados contextuales, bge-small |
+| M5 | + verificador NLI en CPU, `judgekit`, panel de jueces, Langfuse datasets/experiments, MLflow saneado |
+| M6 | + invalidación por tags conectada al outbox; frescura de la caché medida |
+| M7 | + `rag-quality-loop` compilado y probado con `kfp.local`; recursos de Vertex en Terraform |
+| M8 | + una corrida en Vertex AI Pipelines; `judge_golden` y Haiku como jueces del subset |
+
+### 14.4 Frase del CV (agregado)
+> … claim-level hallucination auditing (NLI + LLM judge panel incl. Gemma 4 31B; **{h}% unsupported claims**), a KFP quality loop executed on **Vertex AI Pipelines**, and a semantic cache invalidated by CDC events so cached answers never outlive the knowledge base (**{s}% cost saved**).

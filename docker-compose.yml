@@ -41,7 +41,7 @@ services:
     env_file: ../llm-gateway/.env.example
     environment: { GW_REDIS_URL: "redis://redis:6379/1" }
     extra_hosts: ["host.docker.internal:host-gateway"]
-    mem_limit: 400m
+    mem_limit: 700m   # semantic cache + guardrails ONNX models (P0 v2)
 
   # Services added per milestone: outbox-relay (M1), spark ingest job (M2), api + ui (M4), freshness-probe (M2),
   # prometheus/grafana (M6). Spark uses an image with the Kafka connector JARs baked in (PLAN.md §13, R1).
