@@ -4,6 +4,8 @@
 > an agentic LangGraph retriever that cites or abstains, token streaming over SSE, and a final test on Cloud Run with
 > Claude Haiku. **Headline (to be measured):** _index freshness p95 {F}s, faithfulness {G}, total cloud cost < ${C}._
 
+- ⚡ **Streams with Server-Sent Events (SSE):** answers arrive token by token with typed events (`status`, `token`, `citations`, `retract`, `done`), heartbeats and cancellation — measured as TTFT.
+
 **Status:** 🟡 M0 bootstrap. Full design in [`PLAN.md`](PLAN.md) (Spanish). Courses behind it: Stream engines
 (Spark for ML ingestion), LLM Token Streaming, Grafana & latency engineering (Learning vault).
 
