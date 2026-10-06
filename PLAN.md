@@ -3,6 +3,7 @@
 > **Plan de proyecto** (vive en este repo como `PLAN.md`). **Estado:** ✅ Plan completo (13/13 módulos), listo para implementar en la fase F7 del plan de Learning.
 > Stack: PostgreSQL (fuente + CDC) · Kafka · Spark Structured Streaming · HF embeddings · Qdrant + pgvector · LangGraph (RAG agéntico) · FastAPI + SSE · Haiku (solo en el test final) vía LLM Gateway (`llm-gateway`, Python) · MLflow + Langfuse · GCP (Cloud Run + Qdrant Cloud free) · Terraform · Docker Compose
 > **v2 (§14):** verificador NLI de alucinaciones (ONNX, CPU) · `judgekit` + panel de jueces (Gemma 4 31B) · Langfuse datasets/experiments · KFP v2 → **Vertex AI Pipelines** (prueba final) · caché semántica de P0 invalidada por los eventos del outbox · baselines de chunking y embeddings del proyecto multiagente
+> **v3 (§15):** BigQuery (free tier) como capa analítica: load jobs + Storage Write API, tablas particionadas, Looker Studio; DuckDB con el mismo SQL en local y en la CI
 > Gasto: **$0 hasta el test final** (mock/Ollama en desarrollo).
 
 ## Módulos del plan
@@ -22,6 +23,7 @@
 | 12 | Hitos de implementación y criterios de aceptación | ✅ |
 | 13 | Riesgos y pendientes | ✅ |
 | 14 | **v2 — Absorción de los proyectos del CV** (auditoría de alucinaciones, Vertex AI Pipelines, caché semántica con invalidación por CDC) | ✅ v2 |
+| 15 | **v3 — Analítica con BigQuery** (free tier: load jobs, Storage Write API, Looker Studio; DuckDB en local) | ✅ v3 |
 
 ## Regla del README
 README progresivo: **contexto teórico, conceptual y macro primero**; en cada componente, el detalle técnico al final. Incluye cómo funciona, los pasos para ejecutarlo y las alternativas de ejecución o despliegue (local primero).
@@ -535,6 +537,7 @@ live-rag-platform/
 | **M4 · API + SSE** | FastAPI SSE, UI mínima, gateway (`mock` → `ollama`), RAG básico, cancelación | Streaming visible en la UI; TTFT medido local; la cancelación detiene la generación | Streaming with SSE, Components (API, gateway) | C5 | M |
 | **M5 · Agente + harness** | Grafo completo (grade, rewrite, abstain, groundedness, retract), set de evaluación, juez validado, MLflow + Langfuse | `make eval-full` produce la tabla local; kappa del juez reportado | Agentic RAG Graph, Evaluation, Why the System Abstains | — | L |
 | **M6 · Observabilidad + caché** | Métricas, dashboards K1–K3, alertas, medición de la caché semántica | La demo de frescura se ve en K1; hit rate y ahorro calculados | Observability, Cost Engineering (parte local) | C6 | M |
+| **M6b · Analítica** (§15) | Exporter Postgres → Parquet → BigQuery, Storage Write API para frescura, dataset en Terraform, SQL de análisis, Looker Studio | SQL probado con DuckDB en la CI; dashboard con frescura, costo y gaps; bytes del mes < 1% del free tier | Analytics with BigQuery | — | M |
 | **M7 · Listo para la nube** | Dockerfiles de producción, Terraform completo, secretos, alerta de presupuesto, checklist de la prueba final, simulacro con `mock` **local** | `terraform plan` limpio; checklist revisado; **$0 gastado** | Deploying to GCP (borrador) | — | M |
 | **M8 · 💸 PRUEBA FINAL** | `apply` → deploy → reindex a Qdrant Cloud → `eval-final` con Haiku → cold/warm → **`destroy`** | Resultados con Haiku; **costo real < US$3**; consola de GCP sin recursos activos (captura) | Results finales, Cost Engineering, Deploying to GCP | — | S |
 | **M9 · Pulido y publicación** | README completo, GIF de frescura, integración con P2, `v1.0` | Una persona ajena lo corre local desde el README | Todo | — | M |
@@ -610,3 +613,61 @@ Debezium (Server o Connect) en lugar del outbox, con la comparación outbox vs C
 
 ### 14.4 Frase del CV (agregado)
 > … claim-level hallucination auditing (NLI + LLM judge panel incl. Gemma 4 31B; **{h}% unsupported claims**), a KFP quality loop executed on **Vertex AI Pipelines**, and a semantic cache invalidated by CDC events so cached answers never outlive the knowledge base (**{s}% cost saved**).
+
+
+---
+
+## 15. v3 — Analítica con BigQuery (free tier)
+
+> **Decisión (2026-10-06):** el usuario pide implementar BigQuery con el plan gratuito. Va en **P3** porque ya es el proyecto de GCP (cuenta, Terraform y alerta de presupuesto) y porque genera los datos que más vale la pena analizar: preguntas, respuestas, costos, frescura y evaluaciones a lo largo del tiempo.
+
+### 15.1 Concepto
+**BigQuery** es el *data warehouse* serverless de Google: SQL sobre almacenamiento columnar, sin servidores que administrar, y se paga por bytes guardados y bytes leídos por consulta. Postgres es la base **transaccional** de P3 (una fila a la vez, consistencia); BigQuery es la base **analítica** (escanea millones de filas para agregar). Separar ambos es el patrón OLTP → OLAP.
+
+### 15.2 Qué es gratis (verificar antes de usar)
+| Recurso | Free tier mensual | Uso en P3 |
+|---|---|---|
+| Almacenamiento activo | 10 GB | Unos pocos MB (logs de QA y eventos) |
+| Consultas | 1 TB procesado | Dashboards y análisis; con tablas particionadas, muy por debajo |
+| **Load jobs** (cargar archivos) | Gratis | Camino principal: Parquet → BigQuery |
+| Storage Write API (streaming) | 2 TiB de ingesta | Eventos de frescura casi en tiempo real |
+| Looker Studio | Gratis | Dashboards sobre BigQuery |
+
+**Sandbox vs free tier:** el *sandbox* (sin tarjeta) no permite streaming y borra las tablas a los 60 días. P3 ya necesita facturación activa para la prueba final, así que usa el **free tier normal**, protegido por la alerta de presupuesto (§7) y por límites de bytes por consulta (`maximum_bytes_billed`) en todas las queries. Así, el gasto esperado sigue siendo **$0**.
+
+### 15.3 Cómo funciona aquí
+```
+Postgres (qa_log, outbox, eval_runs) ──exporter (cada N min)──► Parquet ──load job (gratis)──► BigQuery: rag_analytics.*
+Spark foreachBatch ──(eventos de frescura)──► Storage Write API ──────────────────────────────► rag_analytics.freshness_events
+make eval / eval-full ──(resultados por pregunta)──► load job ─────────────────────────────────► rag_analytics.eval_results
+                                                                                                   │
+                                                                     Looker Studio (dashboards) ◄──┘ · SQL de análisis
+```
+**Dataset `rag_analytics`** (tablas particionadas por día y agrupadas por `locale` o `config`):
+| Tabla | Contenido |
+|---|---|
+| `qa_events` | Pregunta (hash + texto si se permite), idioma, configuración, citas, abstención, TTFT, latencia, tokens, costo, cache hit, feedback |
+| `freshness_events` | `doc_id`, versión, `ts_commit`, `ts_indexed`, `ts_retrievable`, índice (Qdrant o pgvector) |
+| `eval_results` | Una fila por pregunta y configuración: métricas de retrieval, faithfulness, citas, abstención, juez usado |
+| `kb_changes` | Historial de cambios de la KB (desde el outbox) |
+
+**Análisis que habilita** (con SQL versionado en `analytics/sql/`):
+- Tendencia de frescura p50/p95 por día y por índice.
+- Costo por respuesta y ahorro de la caché semántica de P0 en el tiempo.
+- **Preguntas que terminan en abstención agrupadas por tema** → qué falta en la KB (*gap analysis*).
+- Calidad por configuración y por idioma a lo largo de las corridas de evaluación (regresiones visibles).
+
+### 15.4 Detalle técnico
+- **Desarrollo local sin nube:** el mismo SQL corre sobre **DuckDB** con los mismos Parquet (`ANALYTICS_BACKEND=duckdb|bigquery`). Así la CI prueba las consultas sin GCP y BigQuery solo se usa cuando se quiere.
+- **Clientes:** `google-cloud-bigquery` (load jobs y consultas) y `google-cloud-bigquery-storage` (Storage Write API). Autenticación con una cuenta de servicio con permisos mínimos (`bigquery.dataEditor` en el dataset, `bigquery.jobUser` en el proyecto).
+- **Terraform:** dataset, tablas con esquema, particionado, expiración de particiones (90 días) y la cuenta de servicio. **El dataset no se destruye con `make gcp-final-test`** (no cobra en reposo dentro del free tier); tiene su propio `terraform destroy -target`.
+- **Control de costos:** `maximum_bytes_billed` en cada consulta, `SELECT` solo de columnas necesarias, filtros por partición obligatorios (`require_partition_filter`), y una vista que reporta los bytes procesados del mes (`INFORMATION_SCHEMA.JOBS`).
+- **Privacidad:** el texto de las preguntas solo se exporta si `EXPORT_QUESTION_TEXT=true`; si no, va su hash y su tema.
+- **Experimento opcional:** `VECTOR_SEARCH` de BigQuery como tercer índice en la comparación de §5.2 (latencia y costo por consulta frente a Qdrant y pgvector), con la KB pequeña para no gastar cuota.
+
+### 15.5 Hito y frase del CV
+| Hito | Objetivo | Criterios de aceptación | Tamaño |
+|---|---|---|---|
+| **M6b · Analítica** (después de M6) | Exporter Postgres → Parquet → BigQuery, Storage Write API para frescura, dataset en Terraform, SQL de análisis con DuckDB en la CI, dashboard en Looker Studio | Las consultas pasan en DuckDB en la CI; con BigQuery, el dashboard muestra frescura, costo y gaps; bytes procesados del mes < 1% del free tier | M |
+
+> … with an analytics layer on **BigQuery** (load jobs + Storage Write API, partitioned tables, Looker Studio) tracking freshness, cost per answer and knowledge-base gaps — within the free tier.

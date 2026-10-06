@@ -16,7 +16,7 @@ members = ["packages/*"]
 ragcore = { workspace = true }
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.6", "duckdb>=1.1", "sqlglot>=25"]
 
 [tool.ruff]
 line-length = 110
