@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from ragcore.contracts import KBChange, SSEEvent
+from ragcore.domain.contracts import KBChange, SSEEvent
 
 
 def test_kb_change_rejects_version_zero():

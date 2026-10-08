@@ -18,7 +18,7 @@ Python 3.12+, managed with `uv` (workspace). `make` is optional on Windows; each
 python scripts/doctor.py           # pre-flight checks (stdlib only): uv, docker, RAM, disk, free ports  (make doctor)
 uv sync --all-packages --dev       # install everything                                                  (make setup)
 uv run pytest -q                   # all tests                                                           (make test)
-uv run pytest packages/ragcore/tests/test_chunking.py::test_point_ids_are_deterministic_and_distinct -q   # single test
+uv run pytest packages/ragcore/tests/test_chunks.py::test_point_ids_are_deterministic_and_distinct -q   # single test
 uv run ruff check .                # lint (CI runs this)                                                 (make lint)
 uv run ruff format .               # format                                                              (make fmt)
 make up PROFILE=full-lite          # docker compose profile: ingest | serve | full-lite
@@ -39,13 +39,25 @@ Two flows share one codebase, and **the shared package `ragcore` is what keeps t
 
 Invariants that span multiple files — preserve them:
 
-- **Deterministic point IDs** (`ragcore.chunking.point_id` = `uuid5(NAMESPACE, "doc_id#chunk_index")`): the same ID is used in Qdrant and `kb_chunks.point_id`, which makes replays idempotent (at-least-once streaming → effectively exactly-once). Changing `NAMESPACE` or the key format invalidates every existing index.
+- **Deterministic point IDs** (`ragcore.domain.chunks.point_id` = `uuid5(NAMESPACE, "doc_id#chunk_index")`; `Chunk.point_id` derives it, never stores it): the same ID is used in Qdrant and `kb_chunks.point_id`, which makes replays idempotent (at-least-once streaming → effectively exactly-once). Changing `NAMESPACE` or the key format invalidates every existing index.
 - **Chunking must be identical at ingest and query time**, so it lives only in `ragcore` (`chunk_markdown`: split on `#`–`###` headings, then by `max_chars`, each chunk prefixed with `title › heading`).
 - **Versioning/cleanup (ADR-3):** events carry `doc_version`; ingestion ignores versions lower than the indexed one (`indexed_versions` table), deletes leftover chunk indexes when a doc shrinks, and a `delete` op removes all of a doc's points.
-- **Event contract** (`ragcore.contracts.KBChange`) is the same whether it comes from the Python outbox relay (8 GB "lite") or Debezium (`⏳16GB`). `SSEEvent` fixes the stream event names: `status, token, citations, retract, done, error`.
+- **Event contract** (`ragcore.domain.contracts.KBChange`) is the same whether it comes from the Python outbox relay (8 GB "lite") or Debezium (`⏳16GB`). `SSEEvent` fixes the stream event names: `status, token, citations, retract, done, error`.
 - `infra/postgres/init.sql` (`articles`, `outbox`, `kb_chunks` with `vector(384)` + generated `tsv`, `indexed_versions`, `qa_log`) must stay in sync with the contracts and the embedding dimension (e5-small, 384 — marked "verify in M2").
 
 Resource/cost constraints that shape choices: everything must fit in 8 GB (`docker-compose.yml` sets per-service `mem_limit`; profiles `ingest`/`serve`/`full-lite`); spend is **$0 until the M8 final test** (LLM provider is `mock`/`ollama` in dev, Haiku only in the final test); GCP via Terraform is plan/validate only until then. The `llm-gateway` compose service builds from `../llm-gateway` (a sibling repo, not in this one).
+
+### Code architecture: hexagonal-lite ([ADR-0002](docs/adr/0002-hexagonal-lite.md))
+
+The repo root stays organized by deployable unit. Inside `ragcore`, the API and the Spark job, dependencies point inward only:
+
+- `ragcore/domain/`: pure rules and types (chunking, IDs, versioning, wire contracts). stdlib + pydantic only.
+- `ragcore/ports.py`: `Protocol`s the application needs (`Embedder`, `VectorIndex`; `ChatModel` arrives in M4).
+- `ragcore/application/`: use cases (micro-batch indexing, the RAG graph). Imports domain + ports + orchestration libs like LangGraph.
+- `ragcore/adapters/`: port implementations used by 2+ deployables (Qdrant, pgvector, ONNX), with their deps as optional extras.
+- Each service's `main.py` is its composition root: the only place that picks and wires adapters.
+
+Placement: code enters `ragcore` only when 2+ deployables need it; a service-only adapter (FastAPI routes, SSE) stays in its service. Small services (`outbox_relay`, `freshness_probe`, `admin`) are plain modules + `main.py`, without ports. Spark's `foreachBatch` stays a thin shell around a pure application function, so ingestion cases are unit-tested without Spark. `packages/ragcore/tests/test_layers.py` enforces the import rules; a failure there means the code belongs in an outer layer.
 
 ### Analytics SQL (BigQuery tested on DuckDB)
 
@@ -53,6 +65,6 @@ Resource/cost constraints that shape choices: everything must fit in 8 GB (`dock
 
 ## Conventions
 
-- New shared logic used by both ingest and serving belongs in `packages/ragcore` (src layout, `hatchling`); each service gets its own directory under `services/` or `ingest/`. Workspace members are `packages/*`.
+- `packages/ragcore` uses a src layout with `hatchling`; workspace members are `packages/*`. Each service gets its own directory under `services/` or `ingest/`.
 - Tests live in `packages/<pkg>/tests/` (unit) and top-level `tests/` (cross-cutting, `tests/integration/` reserved). `pytest` `testpaths` is configured for both; tests needing optional deps use `pytest.importorskip`.
 - Never commit `.env`, generated data, model weights (`*.onnx`, `*.safetensors`), `*.parquet`, `docs/results/*/`, or Terraform state (see `.gitignore`).

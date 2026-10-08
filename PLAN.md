@@ -202,7 +202,7 @@ Qdrant con una colección de vectores **denso + sparse (BM25)**. pgvector con í
 **🔧** FastAPI + LangGraph. Embedding de la consulta con ONNX en CPU dentro del proceso. **Cancelación:** si el cliente se desconecta, se cancela la generación en el gateway (no se pagan tokens que nadie lee).
 **🔁** WebSockets (bidireccional, más complejo); gRPC streaming (entre servicios). Se comparan en el curso C5.
 
-### 3.7 Agente RAG con LangGraph (`packages/ragcore/graph.py`) — detalle en §5
+### 3.7 Agente RAG con LangGraph (`packages/ragcore/src/ragcore/application/`) — detalle en §5
 
 ### 3.8 LLM Gateway (`llm-gateway`, proyecto P0 en Python)
 Proveedores `mock` (stream de tokens determinista para tests), `ollama` (Qwen3 1.7B o Gemma 3 1B en dev) y `anthropic` con **`claude-haiku-4-5`** **solo** en la prueba final. Además aporta la **caché semántica** (se mide su hit rate y el ahorro), el circuit breaker con fallback a Ollama en local y el **tope de presupuesto** (§7).
@@ -486,7 +486,7 @@ make freshness-demo                  # cambia una comisión y muestra cuándo la
 ```
 live-rag-platform/
 ├── README.md · LICENSE · Makefile · docker-compose.yml (profiles) · .env.example · pyproject.toml (uv)
-├── packages/ragcore/            ← compartido: embeddings (ONNX), chunking, retrieval, graph, prompts, contracts
+├── packages/ragcore/            ← compartido, hexagonal-lite (ADR-0002): domain · ports · application · adapters
 ├── kb/                          ← ficha de producto (YAML) + generador de artículos + KB generada
 ├── services/
 │   ├── admin/ · outbox_relay/ · api/ (con ui/ estática) · freshness_probe/

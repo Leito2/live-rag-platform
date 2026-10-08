@@ -1,4 +1,6 @@
-from ragcore.chunking import chunk_markdown, point_id
+from datetime import UTC, datetime
+
+from ragcore.domain.chunks import Chunk, chunk_markdown, point_id
 
 DOC = "Intro text.\n\n## Fees\nTransfers cost 2%.\n\n## Limits\nMax 5,000 USD per day."
 
@@ -6,6 +8,11 @@ DOC = "Intro text.\n\n## Fees\nTransfers cost 2%.\n\n## Limits\nMax 5,000 USD pe
 def test_point_ids_are_deterministic_and_distinct():
     assert point_id("art_1", 0) == point_id("art_1", 0)
     assert point_id("art_1", 0) != point_id("art_1", 1)
+
+
+def test_chunk_point_id_is_derived_not_stored():
+    chunk = Chunk("art_1", 2, 7, "T", "x", "es", None, datetime.now(UTC))
+    assert chunk.point_id == point_id("art_1", 2)
 
 
 def test_chunks_follow_headings_and_carry_context():
